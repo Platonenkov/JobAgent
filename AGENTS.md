@@ -147,7 +147,11 @@ Work through this with the user, one step at a time, and confirm each before mov
   environment variable JOBAGENT_DATA_DIR points elsewhere. File paths stored in jobs.db are
   relative to that data folder; cv_name.py and register_cover.py --print-name print absolute
   paths to write to, and the register scripts convert them back. JOBAGENT_CONFIG_DIR likewise
-  points the scripts at another config folder.
+  points the scripts at another config folder, and JOBAGENT_PROFILE at another master profile.
+  A relative value in any of the three is resolved against the project folder.
+- When any of these variables is set, the paths written in this file and in the skills
+  (`config/...`, `profile/master_profile.md`, `jobs.db`) mean the redirected locations. Run
+  `python3 lib/paths.py` first and read and write the files it prints, never the defaults.
 - Keep scratch files outside the project folder.
 - The browser tool returns only about 1,000 characters from a JavaScript call, so extractors keep
   cards in the page and the assistant reads them back with get_page_text (job-ingest SKILL.md).

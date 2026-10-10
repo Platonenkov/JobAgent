@@ -18,14 +18,28 @@ def find_root(start: str | None = None) -> Path:
 
 
 ROOT = find_root()
+
+
+def _env_path(name: str, default: Path) -> Path:
+    """Path from an environment variable; a relative value is resolved against the project root,
+    so a setting such as ../jobsearch/config works from any working directory."""
+    value = os.environ.get(name)
+    if not value:
+        return default
+    p = Path(value).expanduser()
+    return p if p.is_absolute() else (ROOT / p).resolve()
+
+
 # JOBAGENT_CONFIG_DIR points the scripts at another config folder (the dry run and the tests use
 # a folder holding only the shipped .example.md files, so your own settings are never read).
-CONFIG = Path(os.environ["JOBAGENT_CONFIG_DIR"]).expanduser() if os.environ.get("JOBAGENT_CONFIG_DIR") else ROOT / "config"
-PROFILE = ROOT / "profile" / "master_profile.md"
+CONFIG = _env_path("JOBAGENT_CONFIG_DIR", ROOT / "config")
+# JOBAGENT_PROFILE points at a master profile kept outside the project, for example in a private
+# repository that holds this project as a submodule.
+PROFILE = _env_path("JOBAGENT_PROFILE", ROOT / "profile" / "master_profile.md")
 # Working data (tracker, scraped cards, documents, logs) lives in the project folder by default.
 # Set the environment variable JOBAGENT_DATA_DIR to keep it elsewhere, for example for a dry run
 # with the sample data that should not touch your real tracker.
-DATA = Path(os.environ["JOBAGENT_DATA_DIR"]).expanduser() if os.environ.get("JOBAGENT_DATA_DIR") else ROOT
+DATA = _env_path("JOBAGENT_DATA_DIR", ROOT)
 DB_PATH = DATA / "jobs.db"
 INBOX = DATA / "inbox"
 OUTPUT = DATA / "output"
