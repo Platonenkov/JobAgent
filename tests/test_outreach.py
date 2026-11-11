@@ -321,3 +321,105 @@ def test_cv_hash_covers_attachment(con, tmp_path):
     pdf.write_bytes(b"two")
     with pytest.raises(OutreachError):
         od.claim(con, mid, cfg(), D)
+
+
+# Task 3
+
+def ids(due, key):
+    return [i["contact_id"] for i in due[key]]
+
+
+def test_accept_is_first_message_not_reply(con):
+    cid = ready(con)
+    connect(con, cid)
+    d = od.due(con, cfg(), D)
+    assert cid in ids(d, "first_messages")
+    assert cid not in ids(d, "replies")
+
+
+def test_reply_listed_until_answer_sent(con):
+    cid = ready(con)
+    connect(con, cid)
+    send(con, od.draft(con, cid, "message", "Hi Ana, how is it going?", cfg(), D))
+    od.log_in(con, cid, D, summary="all good, busy hiring")
+    assert cid in ids(od.due(con, cfg(), D), "replies")
+    mid = od.draft(con, cid, "message", "Glad to hear it.", cfg(), D)
+    d = od.due(con, cfg(), D)
+    assert cid not in ids(d, "replies")
+    assert mid in [i["message_id"] for i in d["pending"]]
+    send(con, mid)
+    assert cid not in ids(od.due(con, cfg(), D), "replies")
+
+
+def test_same_day_order_uses_ids(con):
+    cid = ready(con)
+    connect(con, cid)
+    send(con, od.draft(con, cid, "message", "Hi Ana", cfg(), D))
+    od.log_in(con, cid, D, summary="hello back")
+    send(con, od.draft(con, cid, "message", "Nice talking", cfg(), D))
+    assert cid not in ids(od.due(con, cfg(), D), "replies")
+
+
+def test_stale_invite_not_follow_up(con):
+    cid = ready(con)
+    send(con, od.draft(con, cid, "invite", "", cfg(), D))
+    d = od.due(con, cfg(), D + datetime.timedelta(days=7))
+    assert cid in ids(d, "stale_invites")
+    assert cid not in ids(d, "follow_ups")
+
+
+def test_follow_up_per_quiet_spell(con):
+    cid = ready(con)
+    connect(con, cid)
+    send(con, od.draft(con, cid, "message", "Hi Ana", cfg(), D))
+    d7 = D + datetime.timedelta(days=7)
+    assert cid in ids(od.due(con, cfg(), d7), "follow_ups")
+    send(con, od.draft(con, cid, "follow_up", "Just checking in", cfg(), d7), d7)
+    d8 = D + datetime.timedelta(days=8)
+    od.log_in(con, cid, d8, summary="sorry, was away")
+    send(con, od.draft(con, cid, "message", "No worries", cfg(), d8), d8)
+    d15 = D + datetime.timedelta(days=15)
+    d = od.due(con, cfg(), d15)
+    assert cid in ids(d, "follow_ups")
+    assert cid not in ids(d, "to_close")
+    send(con, od.draft(con, cid, "follow_up", "Hi again", cfg(), d15), d15)
+    assert cid in ids(od.due(con, cfg(), D + datetime.timedelta(days=22)), "to_close")
+
+
+def test_new_invites_quota_counts_pending(con):
+    c = cfg(max_per_company=50, target_companies=[{"name": "Example Corp", "market": "br"}])
+    for i in range(2):
+        cid = add(con, f"s{i}", c=c)
+        od.verify_contact(con, cid, D)
+        send(con, od.draft(con, cid, "invite", "", c, D), c=c)
+    for i in range(2):
+        cid = add(con, f"a{i}", c=c)
+        od.verify_contact(con, cid, D)
+        approve_one(con, od.draft(con, cid, "invite", "", c, D))
+    for i in range(3):
+        od.verify_contact(con, add(con, f"t{i}", c=c), D)
+    applied = add(con, "applied", c=c, group="applied", job_id=1)
+    od.verify_contact(con, applied, D)
+    assert ids(od.due(con, c, D), "new_invites") == [applied]
+
+
+def test_no_new_invites_while_paused(con):
+    ready(con)
+    od.pause(con, D)
+    assert od.due(con, cfg(), D)["new_invites"] == []
+
+
+def test_reverify_listed(con):
+    cid = ready(con, day=D - datetime.timedelta(days=15))
+    assert cid in ids(od.due(con, cfg(), D), "reverify")
+
+
+def test_uncertain_and_relist(con):
+    a = od.draft(con, ready(con, "a"), "invite", "", cfg(), D)
+    b = od.draft(con, ready(con, "b"), "invite", "", cfg(), D)
+    token, _ = od.make_batch(con, D)
+    od.approve(con, token, [a, b], D)
+    od.claim(con, a, cfg(), D)
+    d = od.due(con, cfg(), D + datetime.timedelta(days=2))
+    assert [i["message_id"] for i in d["uncertain"]] == [a]
+    assert [i["message_id"] for i in d["relist"]] == [b]

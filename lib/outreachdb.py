@@ -502,3 +502,84 @@ def log_in(con, contact_id, today, *, summary=None, accepted=False):
     _set(con, contact_id, status=new, next_action_date=_d(today))
     jobdb._commit(con)
     return cur.lastrowid
+
+
+# Daily due list
+
+def _item(contact, message_id=None):
+    out = {k: contact[k] for k in ("company", "name", "title", "profile_url", "thread_url",
+                                   "hook")}
+    out["contact_id"] = contact["id"]
+    if message_id is not None:
+        out["message_id"] = message_id
+    return out
+
+
+def due(con, cfg, today):
+    """What needs doing today. Every "last" comparison uses row ids, so same-day order holds."""
+    ensure_schema(con)
+    c = settings(cfg)
+    t = _d(today)
+    contacts = {r["id"]: r for r in con.execute("SELECT * FROM contacts ORDER BY id")}
+    msgs = {}
+    for m in con.execute("SELECT * FROM outreach_messages ORDER BY id"):
+        msgs.setdefault(m["contact_id"], []).append(m)
+    res = {k: [] for k in ("uncertain", "relist", "pending", "first_messages", "replies",
+                           "stale_invites", "follow_ups", "to_close", "new_invites",
+                           "reverify")}
+
+    for cid, ms in msgs.items():
+        for m in ms:
+            if m["direction"] != "out":
+                continue
+            if m["status"] == "sending":
+                res["uncertain"].append(_item(contacts[cid], m["id"]))
+            elif m["status"] == "failed" or (m["status"] == "approved" and _expired(m, c, today)):
+                res["relist"].append(_item(contacts[cid], m["id"]))
+            elif m["status"] in ("draft", "shown", "approved"):
+                res["pending"].append(_item(contacts[cid], m["id"]))
+
+    for cid, contact in contacts.items():
+        st = contact["status"]
+        if st == "closed":
+            continue
+        ms = msgs.get(cid, [])
+        ins = [m for m in ms if m["direction"] == "in"]
+        sent = [m for m in ms if m["direction"] == "out" and m["status"] == "sent"]
+        open_out = [m for m in ms if m["direction"] == "out"
+                    and m["status"] in ("draft", "shown", "approved", "sending")]
+        last_in = ins[-1] if ins else None
+        last_sent_id = sent[-1]["id"] if sent else 0
+        is_due = bool(contact["next_action_date"]) and contact["next_action_date"] <= t
+
+        if st == "ready":
+            limit = _plus(today, -int(c["verify_max_age_days"]))
+            if not contact["verified_on"] or contact["verified_on"] < limit:
+                res["reverify"].append(_item(contact))
+            continue
+        if open_out:
+            continue
+        if st == "connected" and last_in and last_in["kind"] == "accepted" \
+                and last_in["id"] > last_sent_id:
+            res["first_messages"].append(_item(contact))
+        elif last_in and last_in["kind"] == "reply" and last_in["id"] > last_sent_id:
+            res["replies"].append(_item(contact))
+        elif st == "invited" and is_due:
+            res["stale_invites"].append(_item(contact))
+        elif st in CONVERSATION and is_due and last_sent_id > (last_in["id"] if last_in else 0):
+            since = last_in["id"] if last_in else 0
+            reminded = any(m["kind"] == "follow_up" and m["id"] > since for m in sent)
+            res["to_close" if reminded else "follow_ups"].append(_item(contact))
+
+    pu = paused_until(con)
+    if not (pu and pu > t):
+        used = _count_out(con, t, t, INVITE_KINDS) + con.execute(
+            """SELECT COUNT(*) FROM outreach_messages WHERE kind IN ('invite','invite_note')
+               AND status IN ('draft','shown','approved')""").fetchone()[0]
+        room = max(0, int(c["daily_new_invites"]) - used)
+        limit = _plus(today, -int(c["verify_max_age_days"]))
+        fresh = [r for r in contacts.values() if r["status"] == "ready" and not msgs.get(r["id"])
+                 and r["verified_on"] and r["verified_on"] >= limit]
+        fresh.sort(key=lambda r: (r["grp"] != "applied", r["id"]))
+        res["new_invites"] = [_item(r) for r in fresh[:room]]
+    return res
