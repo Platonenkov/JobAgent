@@ -128,7 +128,7 @@ def _company_count(con, canon):
     return con.execute(
         """SELECT COUNT(*) FROM contacts c WHERE c.company_canon=? AND (c.status!='closed' OR
            EXISTS (SELECT 1 FROM outreach_messages m WHERE m.contact_id=c.id
-                   AND m.direction='out' AND m.status='sent'))""", (canon,)).fetchone()[0]
+                   AND m.direction='out' AND m.status IN ('sending','sent')))""", (canon,)).fetchone()[0]
 
 
 def add_contact(con, *, company, name, title, profile_url, group, cfg, job_id=None,
@@ -191,19 +191,23 @@ def verify_contact(con, contact_id, today):
 
 
 def set_contact_status(con, contact_id, status, *, reason=None, next_action_date=None):
+    """Close a contact. Every forward move goes through verify_contact, mark_sent or log_in,
+    so a status cannot be set by hand past the checks those steps make."""
     ensure_schema(con)
     row = _contact(con, contact_id)
-    if status not in CONTACT_STATUSES:
-        raise OutreachError(f"unknown status {status}")
+    if status != "closed":
+        raise OutreachError("only 'closed' can be set by hand; other statuses follow verify, "
+                            "sends and logged replies")
     if row["status"] == "closed":
         raise OutreachError(f"contact {contact_id} is closed")
-    fields = {"status": status}
-    if status == "closed":
-        if reason not in CLOSE_REASONS:
-            raise OutreachError(f"closing needs a reason: {', '.join(CLOSE_REASONS)}")
-        fields["close_reason"] = reason
+    if reason not in CLOSE_REASONS:
+        raise OutreachError(f"closing needs a reason: {', '.join(CLOSE_REASONS)}")
+    fields = {"status": status, "close_reason": reason}
     if next_action_date is not None:
-        fields["next_action_date"] = next_action_date
+        try:
+            fields["next_action_date"] = datetime.date.fromisoformat(next_action_date).isoformat()
+        except ValueError:
+            raise OutreachError("next action date must be YYYY-MM-DD") from None
     _set(con, contact_id, **fields)
     jobdb._commit(con)
 
@@ -257,6 +261,8 @@ def _check_kind(con, contact, kind, c, today, exclude_id=None):
     cid, st = contact["id"], contact["status"]
     if st == "closed":
         raise OutreachError(f"contact {cid} is closed")
+    if _listed(contact["company_canon"], c["exclude_companies"]):
+        raise OutreachError(f"company '{contact['company']}' is excluded")
     if kind in INVITE_KINDS:
         if st != "ready":
             raise OutreachError(f"contact {cid} is '{st}'; invites go only to verified (ready) "
@@ -356,7 +362,7 @@ def make_batch(con, today):
     rows = con.execute(
         """SELECT m.*, c.name, c.company, c.title FROM outreach_messages m
            JOIN contacts c ON c.id=m.contact_id
-           WHERE m.status IN ('draft','shown') ORDER BY m.id""").fetchall()
+           WHERE m.status IN ('draft','shown') AND c.status!='closed' ORDER BY m.id""").fetchall()
     hashes = [(r["id"], action_hash(r)) for r in rows]
     token = hashlib.sha256(repr(sorted(hashes)).encode()).hexdigest()[:8] if rows else ""
     for mid, h in hashes:
@@ -396,9 +402,36 @@ def _count_out(con, day_from, day_to, kinds=None):
     return con.execute(q, args).fetchone()[0]
 
 
+def _reserve(con, message_id, approved_hash, day=None):
+    """Move one approved row to 'sending' only if no one else did: two claims of the same row,
+    for example from parallel shell calls, cannot both win."""
+    cur = con.execute("""UPDATE outreach_messages SET status='sending', sent_on=?
+                         WHERE id=? AND status='approved' AND approved_hash=?""",
+                      (day or _d(datetime.date.today()), message_id, approved_hash))
+    if cur.rowcount != 1:
+        con.rollback()
+        raise OutreachError(f"message {message_id} was already claimed or changed")
+
+
+def _begin_write(con):
+    # Take the write lock before reading the limits, so two claims cannot both pass a cap.
+    if not con.in_transaction:
+        con.execute("BEGIN IMMEDIATE")
+
+
 def claim(con, message_id, cfg, today):
     """Run every check before the browser click and reserve the send (status 'sending')."""
     ensure_schema(con)
+    _begin_write(con)
+    try:
+        return _claim(con, message_id, cfg, today)
+    except Exception:
+        if con.in_transaction and id(con) not in jobdb._BATCH:
+            con.rollback()
+        raise
+
+
+def _claim(con, message_id, cfg, today):
     c = settings(cfg)
     row = _message(con, message_id)
     if row["status"] != "approved":
@@ -419,8 +452,10 @@ def claim(con, message_id, cfg, today):
             raise OutreachError("daily limit of new invites reached")
         if _count_out(con, _plus(today, -6), _d(today), INVITE_KINDS) >= int(c["weekly_invites"]):
             raise OutreachError("weekly limit of invites reached")
-    con.execute("UPDATE outreach_messages SET status='sending', sent_on=? WHERE id=?",
-                (_d(today), message_id))
+    if row["attachment_path"] and _file_sha(row["attachment_path"]) != row["attachment_sha256"]:
+        raise OutreachError(f"attachment of message {message_id} is missing or changed since "
+                            f"the draft")
+    _reserve(con, message_id, row["approved_hash"], _d(today))
     jobdb._commit(con)
     return {"message_id": message_id, "contact_id": contact["id"], "kind": row["kind"],
             "body": row["body"], "profile_url": contact["profile_url"],
@@ -437,12 +472,19 @@ def mark_sent(con, message_id, today, cfg=None):
     row = _message(con, message_id)
     if row["status"] != "sending":
         raise OutreachError(f"message {message_id} is '{row['status']}'; claim it first")
-    con.execute("UPDATE outreach_messages SET status='sent' WHERE id=?", (message_id,))
-    fields = {"next_action_date": _plus(today, c["follow_up_days"])}
-    new = _AFTER_SEND[row["kind"]]
-    if new:
-        fields["status"] = new
-    _set(con, row["contact_id"], **fields)
+    cur = con.execute("UPDATE outreach_messages SET status='sent' WHERE id=? AND status='sending'",
+                      (message_id,))
+    if cur.rowcount != 1:
+        raise OutreachError(f"message {message_id} is no longer sending")
+    contact = _contact(con, row["contact_id"])
+    if contact["status"] != "closed":
+        fields = {"next_action_date": _plus(today, c["follow_up_days"])}
+        new = _AFTER_SEND[row["kind"]]
+        if new == "talking" and contact["status"] == "cv_sent":
+            new = None
+        if new:
+            fields["status"] = new
+        _set(con, row["contact_id"], **fields)
     jobdb._commit(con)
 
 
@@ -451,8 +493,8 @@ def mark_failed(con, message_id):
     row = _message(con, message_id)
     if row["status"] != "sending":
         raise OutreachError(f"message {message_id} is '{row['status']}', not sending")
-    con.execute("UPDATE outreach_messages SET status='failed', sent_on=NULL WHERE id=?",
-                (message_id,))
+    con.execute("""UPDATE outreach_messages SET status='failed', sent_on=NULL
+                   WHERE id=? AND status='sending'""", (message_id,))
     jobdb._commit(con)
 
 
@@ -529,6 +571,8 @@ def due(con, cfg, today):
                            "reverify")}
 
     for cid, ms in msgs.items():
+        if contacts[cid]["status"] == "closed":
+            continue
         for m in ms:
             if m["direction"] != "out":
                 continue

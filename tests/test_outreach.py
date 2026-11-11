@@ -11,7 +11,7 @@ from lib import jobdb, outreachdb as od  # noqa: E402
 from lib.outreachdb import OutreachError  # noqa: E402
 
 D = datetime.date(2026, 11, 10)
-URL = "https://www.linkedin.com/in/ana-souza"
+URL = "https://www.linkedin.com/in/example-recruiter-1"
 
 
 def cfg(**over):
@@ -40,8 +40,8 @@ def con(tmp_path):
     return c
 
 
-def add(con, slug="ana-souza", company="Example Corp", group="target", c=None, **kw):
-    return od.add_contact(con, company=company, name="Ana Souza", title="Technical Recruiter",
+def add(con, slug="example-recruiter-1", company="Example Corp", group="target", c=None, **kw):
+    return od.add_contact(con, company=company, name="Example Recruiter", title="Technical Recruiter",
                           profile_url=f"https://www.linkedin.com/in/{slug}", group=group,
                           cfg=c or cfg(), **kw)
 
@@ -59,10 +59,10 @@ def test_add_contact_starts_found(con):
 
 
 def test_profile_url_variants(con):
-    variants = ["https://br.linkedin.com/in/Ana-Souza/en/?trk=x",
-                "http://m.linkedin.com/in/ana-souza#a",
-                "https://www.linkedin.com/in/ana-souza/details/experience/",
-                "https://linkedin.com/in/ana%2Dsouza"]
+    variants = ["https://br.linkedin.com/in/Example-Recruiter-1/en/?trk=x",
+                "http://m.linkedin.com/in/example-recruiter-1#a",
+                "https://www.linkedin.com/in/example-recruiter-1/details/experience/",
+                "https://linkedin.com/in/example%2Drecruiter-1"]
     for v in variants:
         assert od.norm_profile_url(v) == URL
     add(con)
@@ -143,7 +143,7 @@ def test_ensure_schema_does_not_commit_open_write(con):
 
 # Task 2
 
-def ready(con, slug="ana-souza", day=D):
+def ready(con, slug="example-recruiter-1", day=D):
     cid = add(con, slug)
     od.verify_contact(con, cid, day)
     return cid
@@ -207,8 +207,8 @@ def test_full_send_moves_contact(con):
 
 
 def test_approve_refuses_text_changed_after_batch(con):
-    a = od.draft(con, ready(con, "a"), "invite_note", "Hi Ana", cfg(), D)
-    b = od.draft(con, ready(con, "b"), "invite_note", "Hi Bia", cfg(), D)
+    a = od.draft(con, ready(con, "a"), "invite_note", "Hi there", cfg(), D)
+    b = od.draft(con, ready(con, "b"), "invite_note", "Hi again", cfg(), D)
     token, _ = od.make_batch(con, D)
     con.execute("UPDATE outreach_messages SET body='Hire me' WHERE id=?", (a,))
     with pytest.raises(OutreachError):
@@ -228,7 +228,7 @@ def test_approve_refuses_wrong_token_or_unshown_id(con):
 
 
 def test_claim_refuses_changed_text(con):
-    mid = od.draft(con, ready(con), "invite_note", "Hi Ana", cfg(), D)
+    mid = od.draft(con, ready(con), "invite_note", "Hi there", cfg(), D)
     approve_one(con, mid)
     con.execute("UPDATE outreach_messages SET body='Hire me' WHERE id=?", (mid,))
     with pytest.raises(OutreachError):
@@ -312,7 +312,7 @@ def test_mark_failed_allows_requeue(con):
 def test_cv_hash_covers_attachment(con, tmp_path):
     cid = ready(con)
     connect(con, cid)
-    send(con, od.draft(con, cid, "message", "Hi Ana, how is it going?", cfg(), D))
+    send(con, od.draft(con, cid, "message", "Hi there, how is it going?", cfg(), D))
     od.log_in(con, cid, D, summary="asked about my background")
     pdf = tmp_path / "cv.pdf"
     pdf.write_bytes(b"one")
@@ -340,7 +340,7 @@ def test_accept_is_first_message_not_reply(con):
 def test_reply_listed_until_answer_sent(con):
     cid = ready(con)
     connect(con, cid)
-    send(con, od.draft(con, cid, "message", "Hi Ana, how is it going?", cfg(), D))
+    send(con, od.draft(con, cid, "message", "Hi there, how is it going?", cfg(), D))
     od.log_in(con, cid, D, summary="all good, busy hiring")
     assert cid in ids(od.due(con, cfg(), D), "replies")
     mid = od.draft(con, cid, "message", "Glad to hear it.", cfg(), D)
@@ -354,7 +354,7 @@ def test_reply_listed_until_answer_sent(con):
 def test_same_day_order_uses_ids(con):
     cid = ready(con)
     connect(con, cid)
-    send(con, od.draft(con, cid, "message", "Hi Ana", cfg(), D))
+    send(con, od.draft(con, cid, "message", "Hi there", cfg(), D))
     od.log_in(con, cid, D, summary="hello back")
     send(con, od.draft(con, cid, "message", "Nice talking", cfg(), D))
     assert cid not in ids(od.due(con, cfg(), D), "replies")
@@ -371,7 +371,7 @@ def test_stale_invite_not_follow_up(con):
 def test_follow_up_per_quiet_spell(con):
     cid = ready(con)
     connect(con, cid)
-    send(con, od.draft(con, cid, "message", "Hi Ana", cfg(), D))
+    send(con, od.draft(con, cid, "message", "Hi there", cfg(), D))
     d7 = D + datetime.timedelta(days=7)
     assert cid in ids(od.due(con, cfg(), d7), "follow_ups")
     send(con, od.draft(con, cid, "follow_up", "Just checking in", cfg(), d7), d7)
@@ -423,3 +423,108 @@ def test_uncertain_and_relist(con):
     d = od.due(con, cfg(), D + datetime.timedelta(days=2))
     assert [i["message_id"] for i in d["uncertain"]] == [a]
     assert [i["message_id"] for i in d["relist"]] == [b]
+
+
+# Final review fixes
+
+def test_set_status_only_closes(con):
+    cid = add(con)
+    for st in ("ready", "invited", "connected", "talking", "cv_sent"):
+        with pytest.raises(OutreachError):
+            od.set_contact_status(con, cid, st)
+
+
+def test_claim_is_atomic(con, tmp_path):
+    mid = od.draft(con, ready(con), "invite", "", cfg(), D)
+    approve_one(con, mid)
+    con.commit()
+    other = jobdb.connect(tmp_path / "t.db")
+    od.claim(con, mid, cfg(), D)
+    with pytest.raises(OutreachError):
+        od.claim(other, mid, cfg(), D)
+    with pytest.raises(OutreachError):
+        od._reserve(other, mid, "x")
+
+
+def test_mark_sent_keeps_closed_contact_closed(con):
+    cid = ready(con)
+    mid = od.draft(con, cid, "invite", "", cfg(), D)
+    approve_one(con, mid)
+    od.claim(con, mid, cfg(), D)
+    od.set_contact_status(con, cid, "closed", reason="declined")
+    od.mark_sent(con, mid, D)
+    assert status(con, cid) == "closed"
+
+
+def test_exclude_rechecked_at_draft_and_claim(con):
+    cid = ready(con)
+    mid = od.draft(con, cid, "invite", "", cfg(), D)
+    approve_one(con, mid)
+    banned = cfg(exclude_companies=["Example Corp"])
+    with pytest.raises(OutreachError):
+        od.claim(con, mid, banned, D)
+    with pytest.raises(OutreachError):
+        od.draft(con, ready(con, "b"), "invite", "", banned, D)
+
+
+def test_claim_refuses_missing_attachment(con, tmp_path):
+    cid = ready(con)
+    connect(con, cid)
+    send(con, od.draft(con, cid, "message", "Hi there", cfg(), D))
+    od.log_in(con, cid, D, summary="asked for a CV")
+    pdf = tmp_path / "cv.pdf"
+    pdf.write_bytes(b"one")
+    mid = od.draft(con, cid, "cv", "Here it is.", cfg(), D, attachment_path=str(pdf))
+    pdf.unlink()
+    approve_one(con, mid)
+    with pytest.raises(OutreachError):
+        od.claim(con, mid, cfg(), D)
+
+
+def test_message_after_cv_keeps_cv_sent(con, tmp_path):
+    cid = ready(con)
+    connect(con, cid)
+    send(con, od.draft(con, cid, "message", "Hi there", cfg(), D))
+    od.log_in(con, cid, D, summary="asked for a CV")
+    pdf = tmp_path / "cv.pdf"
+    pdf.write_bytes(b"one")
+    send(con, od.draft(con, cid, "cv", "Here it is.", cfg(), D, attachment_path=str(pdf)))
+    send(con, od.draft(con, cid, "message", "Thanks again", cfg(), D))
+    assert status(con, cid) == "cv_sent"
+    with pytest.raises(OutreachError):
+        od.draft(con, cid, "cv", "Again", cfg(), D, attachment_path=str(pdf))
+
+
+def test_closed_contacts_rows_not_shown(con):
+    cid = ready(con)
+    od.draft(con, cid, "invite", "", cfg(), D)
+    od.set_contact_status(con, cid, "closed", reason="owner_skip")
+    token, rows = od.make_batch(con, D)
+    assert rows == []
+    assert od.due(con, cfg(), D)["pending"] == []
+
+
+def test_next_action_date_validated(con):
+    cid = add(con)
+    with pytest.raises(OutreachError):
+        od.set_contact_status(con, cid, "closed", reason="owner_skip", next_action_date="tomorrow")
+
+
+def test_uncertain_send_holds_company_slot(con):
+    a = ready(con, "a")
+    b = add(con, "b")
+    mid = od.draft(con, a, "invite", "", cfg(), D)
+    approve_one(con, mid)
+    od.claim(con, mid, cfg(), D)
+    od.set_contact_status(con, a, "closed", reason="no_reply")
+    with pytest.raises(OutreachError):
+        add(con, "c")
+    assert b
+
+
+def test_refused_claim_releases_write_lock(con, tmp_path):
+    mid = od.draft(con, ready(con), "invite", "", cfg(), D)
+    con.commit()
+    with pytest.raises(OutreachError):
+        od.claim(con, mid, cfg(), D)
+    assert not con.in_transaction

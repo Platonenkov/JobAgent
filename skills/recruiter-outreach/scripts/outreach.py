@@ -134,7 +134,7 @@ def parser():
         sub.add_parser(name).add_argument("--id", type=int, required=True)
     s = sub.add_parser("set-status")
     s.add_argument("--id", type=int, required=True)
-    s.add_argument("--status", required=True, choices=od.CONTACT_STATUSES)
+    s.add_argument("--status", required=True, choices=["closed"])
     s.add_argument("--reason", choices=od.CLOSE_REASONS)
     s.add_argument("--next-action-date")
     s = sub.add_parser("set-thread")
@@ -165,6 +165,9 @@ def parser():
 
 
 def main(argv=None):
+    # Names in Brazil and elsewhere are not ASCII; the Windows console codepage would crash.
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(encoding="utf-8")
     a = parser().parse_args(argv)
     try:
         _guard()

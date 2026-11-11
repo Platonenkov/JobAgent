@@ -66,7 +66,8 @@ code 2 and a reason on stderr. Settings: config/outreach.md (copy config/outreac
      like it there, what the team is building, how remote work goes.
    - `replies`: answer what they said, keep it short.
    - `follow_ups`: one gentle reminder, then nothing more. `to_close`: close with
-     `set-status --id N --status closed --reason no_reply`.
+     `set-status --id N --status closed --reason no_reply`. `set-status` only closes: every
+     other status follows from `verify`, the sends and `log-in`.
    - `stale_invites`: an invite not accepted after the reminder period. LinkedIn does not allow
      messaging someone outside the user's connections, so ask the user: wait longer, or close
      with `--reason invite_ignored`.
@@ -75,7 +76,9 @@ code 2 and a reason on stderr. Settings: config/outreach.md (copy config/outreac
    table, and for each row why it is going (the hook, or what they said).
 6. **Approval**: run `approve --token T --ids ...` only right after the user's explicit yes to
    that token, for the ids they approved. Changes they ask for: `edit --id N --body-file f`,
-   then a new `batch` and a new yes, unless the user dictated the exact new wording.
+   then a new `batch`, shown to the user, and a new yes. Even when the user dictated the exact
+   wording, the new token and table are shown first: a new batch re-tokens every open draft.
+   Approvals given during a pause stay valid after it only within their usual expiry.
 7. **Sending**, one row at a time in the order of the table:
    1. `claim --id N`. A refusal (limit, expiry, pause, changed text) means do not send; report it.
    2. In the browser, send exactly the claimed text to the claimed profile or thread. An invite
