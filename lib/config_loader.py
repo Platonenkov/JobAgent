@@ -111,3 +111,11 @@ if __name__ == "__main__":
     print("FILTERS:", json.dumps(filters(), indent=2)[:800])
     print("SOURCES keys:", list(sources().keys()))
     print("SCORING:", json.dumps(scoring(), indent=2)[:400])
+
+
+def outreach() -> dict:
+    """Settings of skills/recruiter-outreach from the `outreach` block of config/outreach.md,
+    over the defaults in lib/outreachdb.py. The outreach CLI refuses to run on the example file,
+    so check that config/outreach.md exists before relying on these values."""
+    from lib.outreachdb import settings
+    return settings((load("outreach.md") or {}).get("outreach") or {})
