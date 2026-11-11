@@ -37,7 +37,9 @@ skills/job-pipeline/SKILL.md.
    jobs.db and its backups, inbox/, output/, logs/. Check
    `git status` before any commit and refuse to commit these even if asked casually; explain why.
 6. Respect each job board's terms. Keep the pace low, use LinkedIn only through its public guest
-   pages, and stop if a site shows a block or warning.
+   pages, and stop if a site shows a block or warning. Exception: skills/recruiter-outreach
+   works in the user's signed-in LinkedIn session, at a low pace, sends only text the user
+   approved through a batch token, and stops on any warning.
 7. Follow the user's writing rules from config/application_rules.md (by default British English
    and no em dashes in anything an employer sees).
 
@@ -51,6 +53,7 @@ skills/job-pipeline/SKILL.md.
 | skills/cover-letter | Letters, warrant test, PDF and Word export |
 | skills/cv-verify | Independent checks, including workflow_check.py for the user's own rules |
 | skills/job-apply | Applying to approved roles: repeat guard, route check, attachment check, go-ahead, hand-off (references/portals.md) |
+| skills/recruiter-outreach | Daily LinkedIn outreach to recruiters: contact list, batch approval, pre-send check (scripts/outreach.py, lib/outreachdb.py) |
 | skills/app-tracker | Database bookkeeping CLI (scripts/tracker.py: also add, applied-to, handoff), exports, optional Gmail reconciliation |
 | skills/uk-cv-writer | Bundled CV engine: UK conventions, ATS checks, grounding check against the profile |
 | lib/ | jobdb.py (schema, statuses, connection, duplicate checks), config_loader.py (reads yaml blocks from config/*.md), markets.py (countries from config), paths.py, backup.py (tracker snapshots), housekeeping.py (end-of-run tidy: inbox check, newest 3 snapshots, partial downloads), runlock.py (one run at a time) |
@@ -73,6 +76,7 @@ Everything else in config/ is guidance that you, the assistant, read and apply.
 | config/scoring_calibration.md | nothing (read by the assistant when scoring) |
 | config/sources.md | scrape_sources.<board>.market, scrape_sources.<board>.url_base (optional listing URL prefix, e.g. another Indeed country) |
 | config/application_rules.md | candidate, contact (email, phones per market, linkedin, website), never_mention, employer_rules; form_answers, on_account_wall, general_cv and portfolio are read by the assistant |
+| config/outreach.md | outreach: target_companies, us_sponsors, exclude_companies, sponsor_required_markets, daily_new_invites, weekly_invites, max_outgoing_per_day, max_per_company, follow_up_days, approval_valid_days, pause_days, note_max_chars, verify_max_age_days (outreach.py refuses to run on the example) |
 When a personal file is missing, config_loader.py reads its .example.md twin and prints a
 warning. Never treat example values as the user's data; tell the user which files still need
 creating. PyYAML is required; config_loader exits with an install hint if it is missing.

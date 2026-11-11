@@ -79,3 +79,18 @@ create a second row for a role already tracked in ANY status:
   company + title + location.
 Inserts go through `lib.jobdb.insert_job` (job-ingest), which returns 1 for a new row or 0 for
 a duplicate. app-tracker never inserts; it reads and updates existing rows.
+
+## Outreach tables (skills/recruiter-outreach)
+`lib/outreachdb.py` owns three more tables in the same file, created on first use; it never
+alters `jobs`. They hold other people's data (names, profile links, one-line summaries of their
+messages): the exports and the reports never read them, and errors and logs name only ids and
+companies.
+- `contacts`: one row per recruiter. Status `found` (listed) -> `ready` (employer verified,
+  `verified_on`) -> `invited` -> `connected` -> `talking` -> `cv_sent`; `closed` with a
+  `close_reason` is final. `grp` is `target` or `applied` (then `job_id` points at the applied
+  role). `company_canon` drives the per-company limit, counted over the whole search.
+- `outreach_messages`: one row per message, `direction` out or in. Out rows move `draft` ->
+  `shown` (in a batch, `batch_token`, `shown_hash`) -> `approved` (`approved_hash`,
+  `approved_on`) -> `sending` (claimed, `sent_on`) -> `sent` or `failed`. In rows are
+  `received`, kind `accepted` or `reply`.
+- `outreach_state`: key/value, `paused_until`.

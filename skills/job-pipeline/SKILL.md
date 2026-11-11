@@ -95,6 +95,9 @@ A scheduled run is a normal run with nobody watching. It does stages 1 to 7 in f
 Needs: the user's computer on, the Claude desktop app open, Chrome running with Claude in Chrome
 and signed in to the boards and portals, and the JobAgent folder connected.
 
+Recruiter outreach on LinkedIn is a separate daily skill (skills/recruiter-outreach), not a
+pipeline stage.
+
 ## Applying (only when the user asks)
 A normal run stops at `verified`. When the user asks you to apply to specific roles, follow
 skills/job-apply/SKILL.md: repeat guard, route check before any typing, attach and confirm the
