@@ -29,6 +29,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 from docx import Document
 from docx.oxml.ns import qn
 
@@ -101,7 +102,9 @@ def _has_term(text, term):
 def render_pdf(docx_path, td):
     """Render the .docx to PDF once (reused by page + layout checks). Returns the
     PDF path or None if LibreOffice is unavailable."""
-    prof = f"-env:UserInstallation=file://{os.path.join(td, 'lo')}"
+    # as_uri() yields file:///C:/... on Windows; a hand-built "file://C:\..." is
+    # rejected by LibreOffice with a modal "bootstrap.ini is corrupt" dialog.
+    prof = "-env:UserInstallation=" + Path(td, "lo").as_uri()
     subprocess.run(["soffice", "--headless", prof, "--convert-to", "pdf",
                     "--outdir", td, docx_path],
                    capture_output=True, text=True, timeout=120)
@@ -110,8 +113,22 @@ def render_pdf(docx_path, td):
 
 
 def _layout_text(pdf_path):
-    return subprocess.run(["pdftotext", "-layout", pdf_path, "-"],
-                          capture_output=True, text=True).stdout
+    # pdftotext writes UTF-8; text=True would decode with the Windows ANSI codepage.
+    out = subprocess.run(["pdftotext", "-layout", pdf_path, "-"], capture_output=True).stdout
+    return out.decode("utf-8", errors="replace")
+
+
+def _page_count(pdf_path):
+    try:
+        pi = subprocess.run(["pdfinfo", pdf_path], capture_output=True, text=True)
+        m = re.search(r"Pages:\s+(\d+)", pi.stdout)
+        if m:
+            return int(m.group(1))
+    except FileNotFoundError:
+        pass
+    # Some installs (Git for Windows) ship pdftotext without pdfinfo: pages end with a form feed.
+    chunks = [c for c in _layout_text(pdf_path).split("\f") if c.strip()]
+    return len(chunks) or None
 
 
 def check_structure(doc):
@@ -195,9 +212,7 @@ def check_pages(pdf_path):
         warn("Could not render to PDF (LibreOffice unavailable); page check skipped.")
         return
     try:
-        pi = subprocess.run(["pdfinfo", pdf_path], capture_output=True, text=True)
-        m = re.search(r"Pages:\s+(\d+)", pi.stdout)
-        pages = int(m.group(1)) if m else None
+        pages = _page_count(pdf_path)
 
         # Per-page line counts (form feed separates pages in pdftotext output).
         page_chunks = [c for c in _layout_text(pdf_path).split("\f")]
@@ -278,6 +293,12 @@ def check_widows(pdf_path):
         full = max(wrapped_firsts) if wrapped_firsts else 0
         too_long = [b for b in bullets if len(b) >= 3]
         thin = [b for b in bullets if len(b) == 2 and full and len(b[-1]) / full < 0.5]
+        if not bullets:
+            # LibreOffice on Windows can render the list glyph from a font with no Unicode
+            # mapping, so pdftotext drops it and no bullet is recognised.
+            warn("No bullets recognised in the rendered PDF (list glyph not extracted); "
+                 "widow and wrap checks skipped. Check the bullets by eye.")
+            return
         if too_long:
             bad(f"{len(too_long)} bullet(s) run to 3 or more lines. Maximum is 2: split into two "
                 "bullets or tighten.")
